@@ -44,6 +44,7 @@ class GSheet_Handler():
     def _load_from_streamlit(self):
         # 1. Handle Credentials (Check if it's a string or dict)
         creds = st.secrets["GSHEET_CREDENTIALS"]
+        creds = creds.replace('\n', '').replace('\r', '')
         self.GSHEET_CREDENTIALS = json.loads(creds) if isinstance(creds, str) else creds
         
         # 2. Handle IDs
