@@ -159,6 +159,7 @@ def validate_and_build_vessels(raw_records: list) -> tuple[list, list]:
             "kpler_id":     str(row.get("KPLER_ID", "N/A")).strip(),
             "departure":    str(row.get("Departure", "N/A")).strip(),
             "dest":         str(row.get("Original_Dest", "N/A")).strip(),
+            "cargo":        str(row.get("Cargo", "N/A")).strip(),
             "last_updated": str(row.get("Last_Updated", "")).strip(),
             "trace":        clean,
         })
@@ -408,6 +409,7 @@ if selected_vessels:
                 "IMO":             v["imo"],
                 "KPLER_ID":        v["kpler_id"],
                 "Departure":       v["departure"],
+                "Cargo":           v['cargo'],
                 "Waypoints":       len(v["trace"]),
                 "Last Time (SGT)": last["timestamp_sgt"],
                 "Last Lat":        round(last["lat"], 5),
