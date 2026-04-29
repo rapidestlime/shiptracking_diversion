@@ -402,7 +402,7 @@ if selected_vessels:
     with st.expander("📋 Vessel Details", expanded=False):
         rows = []
         for v in selected_vessels:
-            last = v["trace"][-1]
+            last = v["trace"][-1] if v["trace"] else {}
             rows.append({
                 "Vessel":          v["name"],
                 "IMO":             v["imo"],
@@ -418,4 +418,5 @@ if selected_vessels:
                 "Destination":     v["dest"],
                 "Last Updated":    v["last_updated"],
             })
-        st.dataframe(all_vessels, width="stretch")
+        details_df = pd.DataFrame(rows)
+        st.dataframe(details_df, width="stretch")
