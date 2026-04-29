@@ -418,4 +418,4 @@ if selected_vessels:
                 "Destination":     v["dest"],
                 "Last Updated":    v["last_updated"],
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(all_vessels, width="stretch")
