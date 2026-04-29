@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
 import folium
+import time
 from streamlit_folium import st_folium
+from gspread.exceptions import APIError
 from datetime import datetime, timezone, timedelta
 
 from gsheet_handler import GSheet_Handler, get_all_ships
@@ -166,36 +168,50 @@ def validate_and_build_vessels(raw_records: list) -> tuple[list, list]:
 
 # ── Load data from GSheet ─────────────────────────────────────────────────────
 
-@st.cache_data(ttl=1800)
-def get_data() -> tuple[list, list]:
+# 1. Cache the AUTHENTICATION (The Client/Connection)
+# We use cache_resource because this is a persistent object, not just data.
+@st.cache_resource
+def get_handler():
     try:
-        # Try Streamlit secrets first (production / Streamlit Cloud).
-        # Fall back to secrets.env for local development.
-        try:
-            # handler = GSheet_Handler.__new__(GSheet_Handler)
-            # handler.GSHEET_CREDENTIALS = dict(st.secrets["gcp_service_account"])
-            # handler.SPREADSHEET_ID     = st.secrets["gsheet"]["spreadsheet_id"]
-            # handler.SHEET_NAME         = st.secrets["gsheet"].get("sheet_name", "Sheet1")
-            handler = GSheet_Handler(use_streamlit=True)
-        except (KeyError, FileNotFoundError):
-            # Streamlit secrets not configured — use secrets.env locally
-            handler = GSheet_Handler(use_streamlit=False)
+        # Try production secrets first, then local env
+        return GSheet_Handler(use_streamlit=True)
+    except (KeyError, FileNotFoundError):
+        return GSheet_Handler(use_streamlit=False)
     except Exception as exc:
         st.error(f"❌ Google Sheets auth failed: {exc}")
-        return [], [{"name": "N/A", "error": str(exc)}]
- 
-    try:
-        raw_records = get_all_ships(handler.sheet)
-    except Exception as exc:
-        st.error(f"❌ Could not read sheet: {exc}")
-        return [], [{"name": "N/A", "error": str(exc)}]
- 
-    return validate_and_build_vessels(raw_records)
- 
+        return None
 
+# 2. Cache the DATA (The Records)
+# Note the underscore in _handler: this tells Streamlit NOT to hash 
+# the complex GSheet object, which prevents unnecessary cache resets.
+@st.cache_data(ttl=1800)
+def get_data(_handler) -> tuple[list, list]:
+    if not _handler:
+        return [], [{"name": "N/A", "error": "Auth Handler not initialized"}]
+    
+    # Retry logic for 503 errors (Service Unavailable)
+    for attempt in range(3):
+        try:
+            raw_records = get_all_ships(_handler.sheet)
+            return validate_and_build_vessels(raw_records)
+        except APIError as e:
+            # If it's a 503, wait and retry
+            if e.response.status_code == 503 and attempt < 2:
+                time.sleep(2 * (attempt + 1))
+                continue
+            st.error(f"❌ Google Sheets API Error: {e}")
+            return [], [{"name": "N/A", "error": str(e)}]
+        except Exception as exc:
+            st.error(f"❌ Could not read sheet: {exc}")
+            return [], [{"name": "N/A", "error": str(exc)}]
 
-with st.spinner("Loading vessel data from Google Sheets…"):
-    all_vessels, faulty_vessels = get_data()
+# --- APP FLOW ---
+
+with st.spinner("Connecting to Google Services..."):
+    handler = get_handler()
+
+with st.spinner("Loading vessel data from Google Sheets..."):
+    all_vessels, faulty_vessels = get_data(handler)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -234,7 +250,7 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("🔄 Refresh Data"):
-        st.cache_data.clear()
+        get_data.clear()
         st.rerun()
 
 
