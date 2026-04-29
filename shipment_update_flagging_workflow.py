@@ -44,12 +44,12 @@ TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_KEY", "YOUR_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "YOUR_CHANNEL_ID")
 
 # Detection tuning
-MIN_PINGS_REQUIRED        = 6    # skip ships with fewer pings than this
-N_RECENT_PINGS            = 50    # how many most-recent pings to analyse
+MIN_PINGS_REQUIRED        = 5    # skip ships with fewer pings than this
+N_RECENT_PINGS            = 100    # how many most-recent pings to analyse
 DIVERSION_SCORE_THRESHOLD = 2    # flag if this many signals (out of 3) fire
 
 # AIS gap handling
-AIS_GAP_THRESHOLD_HOURS   = 12    # consecutive ping gap (hours) that counts as AIS-off event
+AIS_GAP_THRESHOLD_HOURS   = 24    # consecutive ping gap (hours) that counts as AIS-off event
 AIS_JUMP_SG_APPROACH_NM   = 100  # if ship reappears >= this much closer to SG after a gap, flag as suspicious jump
 
 # Singapore reference point
@@ -154,10 +154,22 @@ def find_last_gap(sorted_pings: list) -> Optional[int]:
     threshold_s = AIS_GAP_THRESHOLD_HOURS * 3600
     last_gap_idx = None
     for i in range(1, len(sorted_pings)):
-        t_prev = sorted_pings[i - 1].get("receivedTime", 0)
-        t_curr = sorted_pings[i].get("receivedTime", 0)
-        if (t_curr - t_prev) >= threshold_s:
-            last_gap_idx = i
+        # 1. Get the raw values
+        raw_prev = sorted_pings[i - 1].get("receivedTime", 0)
+        raw_curr = sorted_pings[i].get("receivedTime", 0)
+
+        # 2. Convert strings to datetime objects if they aren't already
+        # (Assuming '0' is your fallback, we handle that too)
+        t_prev = datetime.fromisoformat(raw_prev) if isinstance(raw_prev, str) else raw_prev
+        t_curr = datetime.fromisoformat(raw_curr) if isinstance(raw_curr, str) else raw_curr
+
+        # 3. Calculate the gap in seconds
+        # Subtracting two datetimes creates a timedelta object
+        if isinstance(t_curr, datetime) and isinstance(t_prev, datetime):
+            gap_seconds = (t_curr - t_prev).total_seconds()
+            
+            if gap_seconds >= threshold_s:
+                    last_gap_idx = i
     return last_gap_idx
 
 
@@ -179,7 +191,7 @@ def check_ais_jump(sorted_pings: list, gap_idx: int, sg_bound: bool) -> dict:
     pre  = sorted_pings[gap_idx - 1]
     post = sorted_pings[gap_idx]
 
-    gap_hours    = (post.get("receivedTime", 0) - pre.get("receivedTime", 0)) / 3600
+    gap_hours    = (datetime.fromisoformat(post.get("receivedTime", 0)) - datetime.fromisoformat(pre.get("receivedTime", 0))).total_seconds() / 3600
     jump_nm      = haversine_nm(pre["lat"], pre["lon"], post["lat"], post["lon"])
 
     sg_dist_pre  = haversine_nm(pre["lat"],  pre["lon"],  SINGAPORE["lat"], SINGAPORE["lon"])
@@ -337,9 +349,9 @@ def detect_diversion(
     signals["mode"] = mode
 
     # ── Shared regression setup ────────────────────────────────────────────
-    timestamps = [p.get("receivedTime", i) for i, p in enumerate(recent)]
+    timestamps = [datetime.fromisoformat(p["receivedTime"]) for p in recent]
     t0         = timestamps[0]
-    norm_t     = [t - t0 for t in timestamps]
+    norm_t     = [(t - t0).total_seconds() for t in timestamps]
     weights    = [float(i + 1) for i in range(len(recent))]   # recency weights
 
     sg_dists = [
@@ -465,7 +477,7 @@ def detect_diversion(
                                             SINGAPORE["lat"], SINGAPORE["lon"])
             ship_course   = p.get("course") or p.get("heading")
             if ship_course is not None:
-                if bearing_diff(bearing_to_sg, float(ship_course)) > 135:
+                if bearing_diff(bearing_to_sg, float(ship_course)) > 45:
                     bearing_away_count += 1
         signal_2 = bearing_away_count >= threshold_pings
         signals["bearing_away_sg"] = f"{bearing_away_count}/{len(recent)}"
@@ -547,12 +559,11 @@ def send_telegram_alert(result: DiversionResult) -> None:
     Runs in stub/log-only mode until TELEGRAM_BOT_TOKEN is set.
     """
     p    = result.latest_ping or {}
-    lat  = p.get("lat", "?")
-    lon  = p.get("lon", "?")
+    lat = p.get("geo", {}).get("lat", 0.0)
+    lon = p.get("geo", {}).get("lon", 0.0)
     spd  = p.get("speed", "?")
-    area = p.get("areaName", "Unknown area")
-    ts   = datetime.fromtimestamp(p["receivedTime"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") \
-           if p.get("receivedTime") else "?"
+    # area = p.get("areaName", "Unknown area")
+    ts   = p["receivedTime"] + " UTC" if p.get("receivedTime") else "?"
 
     text = (
         f"🚨 *Possible Singapore Diversion*\n\n"
@@ -574,7 +585,7 @@ def send_telegram_alert(result: DiversionResult) -> None:
 
     text += (
         f"\n*Latest position:* `{lat}, {lon}`\n"
-        f"*Area:* {area}\n"
+        #f"*Area:* {area}\n"
         f"*Speed:* {spd} kn  |  *As of:* {ts}\n\n"
         f"[Track on MarineTraffic]"
         f"(https://www.marinetraffic.com/en/ais/details/ships/shipid:{result.ship_id})"
