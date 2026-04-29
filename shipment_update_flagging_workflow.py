@@ -154,8 +154,8 @@ def find_last_gap(sorted_pings: list) -> Optional[int]:
     threshold_s = AIS_GAP_THRESHOLD_HOURS * 3600
     last_gap_idx = None
     for i in range(1, len(sorted_pings)):
-        t_prev = sorted_pings[i - 1].get("timestamp", 0)
-        t_curr = sorted_pings[i].get("timestamp", 0)
+        t_prev = sorted_pings[i - 1].get("receivedTime", 0)
+        t_curr = sorted_pings[i].get("receivedTime", 0)
         if (t_curr - t_prev) >= threshold_s:
             last_gap_idx = i
     return last_gap_idx
@@ -179,7 +179,7 @@ def check_ais_jump(sorted_pings: list, gap_idx: int, sg_bound: bool) -> dict:
     pre  = sorted_pings[gap_idx - 1]
     post = sorted_pings[gap_idx]
 
-    gap_hours    = (post.get("timestamp", 0) - pre.get("timestamp", 0)) / 3600
+    gap_hours    = (post.get("receivedTime", 0) - pre.get("receivedTime", 0)) / 3600
     jump_nm      = haversine_nm(pre["lat"], pre["lon"], post["lat"], post["lon"])
 
     sg_dist_pre  = haversine_nm(pre["lat"],  pre["lon"],  SINGAPORE["lat"], SINGAPORE["lon"])
@@ -337,7 +337,7 @@ def detect_diversion(
     signals["mode"] = mode
 
     # ── Shared regression setup ────────────────────────────────────────────
-    timestamps = [p.get("timestamp", i) for i, p in enumerate(recent)]
+    timestamps = [p.get("receivedTime", i) for i, p in enumerate(recent)]
     t0         = timestamps[0]
     norm_t     = [t - t0 for t in timestamps]
     weights    = [float(i + 1) for i in range(len(recent))]   # recency weights
@@ -551,8 +551,8 @@ def send_telegram_alert(result: DiversionResult) -> None:
     lon  = p.get("lon", "?")
     spd  = p.get("speed", "?")
     area = p.get("areaName", "Unknown area")
-    ts   = datetime.fromtimestamp(p["timestamp"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") \
-           if p.get("timestamp") else "?"
+    ts   = datetime.fromtimestamp(p["receivedTime"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") \
+           if p.get("receivedTime") else "?"
 
     text = (
         f"🚨 *Possible Singapore Diversion*\n\n"
@@ -632,12 +632,12 @@ def merge_positions(existing: list, fresh: list) -> list:
     Fresh positions have keys like 'lat', 'lon', 'timestamp', 'speed',
     'course', 'heading' etc. — same shape the detection algo expects.
     """
-    seen_ts = {p.get("timestamp") for p in existing if p.get("timestamp")}
+    seen_ts = {p.get("receivedTime") for p in existing if p.get("receivedTime")}
     for p in fresh:
-        if p.get("timestamp") not in seen_ts:
+        if p.get("receivedTime") not in seen_ts:
             existing.append(p)
-            seen_ts.add(p.get("timestamp"))
-    return sorted(existing, key=lambda p: p.get("timestamp", 0))
+            seen_ts.add(p.get("receivedTime"))
+    return sorted(existing, key=lambda p: p.get("receivedTime", 0))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -724,7 +724,7 @@ def run() -> None:
         #     log.warning("  No pings available — skipping detection.")
         #     continue
 
-        first_ping = min(fresh_positions, key=lambda p: p.get("timestamp", 0))
+        first_ping = min(fresh_positions, key=lambda p: p.get("receivedTime", 0))
         origin_lat = first_ping.get("lat", 0.0)
         origin_lon = first_ping.get("lon", 0.0)
 
