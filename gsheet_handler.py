@@ -25,6 +25,7 @@ COLUMNS = [
     "Original_Dest",
     "Original_Dest_Lat",
     "Original_Dest_Long",
+    "Cargo"
 ]
 
 
