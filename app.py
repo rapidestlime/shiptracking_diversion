@@ -166,7 +166,7 @@ def validate_and_build_vessels(raw_records: list) -> tuple[list, list]:
 
 # ── Load data from GSheet ─────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def get_data() -> tuple[list, list]:
     try:
         # Try Streamlit secrets first (production / Streamlit Cloud).
