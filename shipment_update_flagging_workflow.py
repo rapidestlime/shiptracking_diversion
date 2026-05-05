@@ -1,24 +1,3 @@
-"""
-ship_diversion_checker.py
-
-Cron job:
-  1. Reads all ship rows from Google Sheets via gsheet_handler.
-  2. Fetches the latest positions from Kpler via kpler_handler.
-  3. Merges new positions into Coord_Trace and writes back to the sheet.
-  4. Runs multi-signal diversion detection on each ship.
-  5. Sends Telegram alerts for any flagged ships.
-
-Install deps:
-    pip install gspread google-auth numpy requests httpx python-dotenv
-
-Cron example (every 30 min):
-    */30 * * * * /usr/bin/python3 /path/to/ship_diversion_checker.py >> /var/log/ship_checker.log 2>&1
-
-Sheet columns (must match COLUMNS in gsheet_handler.py):
-    Last_Updated | IMO | Name | KPLER_ID | Departure |
-    Coord_Trace | Original_Dest | Original_Dest_Lat | Original_Dest_Long
-"""
-
 import json
 import math
 import logging
@@ -45,7 +24,7 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "YOUR_CHANNEL_ID")
 
 # Detection tuning
 MIN_PINGS_REQUIRED        = 5    # skip ships with fewer pings than this
-N_RECENT_PINGS            = 100    # how many most-recent pings to analyse
+N_RECENT_PINGS            = 150    # how many most-recent pings to analyse
 DIVERSION_SCORE_THRESHOLD = 2    # flag if this many signals (out of 3) fire
 
 # AIS gap handling
@@ -587,8 +566,8 @@ def send_telegram_alert(result: DiversionResult) -> None:
         f"\n*Latest position:* `{lat}, {lon}`\n"
         #f"*Area:* {area}\n"
         f"*Speed:* {spd} kn  |  *As of:* {ts}\n\n"
-        f"[Track on MarineTraffic]"
-        f"(https://www.marinetraffic.com/en/ais/details/ships/shipid:{result.ship_id})"
+        f"[Track on Dashboard]"
+        f"(https://pertaminashiptrackingdiversion.streamlit.app)"
     )
 
     stub_mode = (not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN")
@@ -769,5 +748,3 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
-
-
