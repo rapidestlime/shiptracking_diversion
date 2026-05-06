@@ -22,6 +22,7 @@ COLUMNS = [
     "KPLER_ID",
     "Departure",
     "Coord_Trace",
+    "Diversion_Flag",
     "Original_Dest",
     "Original_Dest_Lat",
     "Original_Dest_Long",
@@ -103,7 +104,7 @@ def serialise_record(record: dict) -> list:
 
 # ── Read ──────────────────────────────────────────────────────────────────────
 
-def get_all_ships(sheet) -> list[dict]:
+def get_all_ships(sheet) -> tuple[list[dict], dict]:
     """Return every ship record as a list of dicts.
     
     :param: sheet: Initialised GSheet Object
@@ -112,9 +113,15 @@ def get_all_ships(sheet) -> list[dict]:
 
     if not rows:
         return []
-
+    # Create the header map using gspread utility
     header, *data_rows = rows
-    return [parse_row(row) for row in data_rows if any(row)]
+    header_map = {
+        name: gspread.utils.rowcol_to_a1(1, i + 1).replace("1", "") 
+        for i, name in enumerate(header)
+    }
+    ships = [parse_row(row) for row in data_rows if any(row)]
+
+    return ships, header_map
 
 
 def get_ship_by_id(ship_id: int | str) -> dict | None:
@@ -127,36 +134,95 @@ def get_ship_by_id(ship_id: int | str) -> dict | None:
 
 # ── Write ─────────────────────────────────────────────────────────────────────
 
-def upsert_ship(sheet, row_index: int, updated_record: dict):
+def upsert_ship(sheet, row_index: int, updated_record: dict, header_map: dict):
     """Overwrite a specific row in the sheet (row_index is 1-based)."""
     
     # 1. Set the timestamp before the loop
     now_ts = datetime.now(ZoneInfo("Asia/Singapore")).isoformat(timespec="seconds")
     updated_record["Last_Updated"] = now_ts
 
-    WRITE_COLUMNS = [
-        "Last_Updated",
-        "IMO",
-        "Name",
-        "KPLER_ID",
-        "Departure",
-        "Coord_Trace",
-    ]
+    ### old code 1 ###
+    # WRITE_COLUMNS = [
+    #     "Last_Updated",
+    #     "IMO",
+    #     "Name",
+    #     "KPLER_ID",
+    #     "Departure",
+    #     "Coord_Trace",
+    #     "Diversion_Flagged"
+    # ]
 
-    row_data = []
-    for col in WRITE_COLUMNS:
-        value = updated_record.get(col, "")
+    # row_data = []
+    # for col in WRITE_COLUMNS:
+    #     value = updated_record.get(col, "")
         
-        # 2. Handle specific formatting
-        if col == "Coord_Trace":
-            value = json.dumps(value) if value else "[]"
+    #     # 2. Handle specific formatting
+    #     if col == "Coord_Trace":
+    #         value = json.dumps(value) if value else "[]"
         
-        row_data.append(value)
+    #     row_data.append(value)
 
-    # 3. Correct Range Logic
-    # We want "A{row}:F{row}"
-    num_cols = len(WRITE_COLUMNS)
-    end_col_letter = gspread.utils.rowcol_to_a1(row=row_index,col=num_cols) # Returns "F"
-    range_label = f"A{row_index}:{end_col_letter}{row_index}"
+    # # 3. Correct Range Logic
+    # # We want "A{row}:F{row}"
+    # num_cols = len(WRITE_COLUMNS)
+    # end_col_letter = gspread.utils.rowcol_to_a1(row=row_index,col=num_cols) # Returns "F"
+    # range_label = f"A{row_index}:{end_col_letter}{row_index}"
 
-    sheet.update(range_name=range_label, values=[row_data])
+    # sheet.update(range_name=range_label, values=[row_data])
+    
+    ### old code 2 ###
+    # # 1. Get the current row values
+    # existing_row = sheet.get_values(
+    #     f"A{row_index}:{row_index}", 
+    #     value_render_option='FORMULA'
+    # )[0]
+
+    # # 2. Map your header names to their actual column indices (1-based)
+    # # Assuming you have a header row at index 1
+    # headers = sheet.row_values(1) 
+    # header_to_idx = {name: i for i, name in enumerate(headers)}
+
+    # # 3. Update only the fields present in updated_record
+    # for key, value in updated_record.items():
+    #     if key in header_to_idx:
+    #         idx = header_to_idx[key]
+    #         # Ensure the list is long enough
+    #         while len(existing_row) <= idx:
+    #             existing_row.append("")
+            
+    #         if key == "Coord_Trace":
+    #             value = json.dumps(value) if value else "[]"
+
+    #         elif key == "Diversion_Flag":
+    #             value = json.dumps(value) if value else "[]"
+                
+    #         existing_row[idx] = value
+
+    # # 4. Push the full row back
+    # sheet.update(f"A{row_index}", [existing_row])
+
+    # 2. Prepare the list of specific cell updates
+    batch_data = []
+
+    for key, value in updated_record.items():
+        if key in header_map:
+            col_letter = header_map[key]
+            
+            # 3. Handle specific formatting
+            if key == "Coord_Trace":
+                value = json.dumps(value) if value else "[]"
+            
+            # Note: For Google Sheets checkboxes, usually a raw bool is better than json.dumps
+            elif key == "Diversion_Flag":
+                value = bool(value)
+
+            # 4. Create the update entry for this specific column
+            batch_data.append({
+                'range': f"{col_letter}{row_index}",
+                'values': [[value]]
+            })
+
+    # 5. Push all changes in ONE API call
+    if batch_data:
+        # USER_ENTERED ensures numbers/dates/booleans are parsed correctly by Google
+        sheet.batch_update(batch_data, value_input_option='USER_ENTERED')
