@@ -160,6 +160,7 @@ def validate_and_build_vessels(raw_records: list) -> tuple[list, list]:
             "departure":    str(row.get("Departure", "N/A")).strip(),
             "dest":         str(row.get("Original_Dest", "N/A")).strip(),
             "cargo":        str(row.get("Cargo", "N/A")).strip(),
+            "diversion_flag":        str(row.get("Diversion_Flag", "")).strip(),
             "last_updated": str(row.get("Last_Updated", "")).strip(),
             "trace":        clean,
         })
@@ -193,7 +194,7 @@ def get_data(_handler) -> tuple[list, list]:
     # Retry logic for 503 errors (Service Unavailable)
     for attempt in range(3):
         try:
-            raw_records = get_all_ships(_handler.sheet)
+            raw_records, _ = get_all_ships(_handler.sheet)
             return validate_and_build_vessels(raw_records)
         except APIError as e:
             # If it's a 503, wait and retry
@@ -410,6 +411,7 @@ if selected_vessels:
                 "KPLER_ID":        v["kpler_id"],
                 "Departure":       v["departure"],
                 "Cargo":           v['cargo'],
+                "Diversion_Flag": v['diversion_flag'],
                 "Waypoints":       len(v["trace"]),
                 "Last Time (SGT)": last["timestamp_sgt"],
                 "Last Lat":        round(last["lat"], 5),
