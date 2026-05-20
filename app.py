@@ -312,22 +312,56 @@ for i, vessel in enumerate(selected_vessels):
     trace = vessel["trace"]
     if not trace:
         continue
+    # old code with faulty instance for USWC origin vessel traces
+    # coords = [[pt["lat"], pt["lon"]] for pt in trace]
 
-    coords = [[pt["lat"], pt["lon"]] for pt in trace]
+    # # Polyline
+    # folium.PolyLine(
+    #     locations=coords,
+    #     color=color,
+    #     weight=3,
+    #     opacity=0.85,
+    #     tooltip=folium.Tooltip(
+    #         f"<b style='color:{color}'>{vessel['name']}</b><br>"
+    #         f"IMO: {vessel['imo']} · KPLER_ID: {vessel['kpler_id']}<br>"
+    #         f"{len(trace)} waypoints",
+    #         sticky=True,
+    #     ),
+    # ).add_to(m)
 
-    # Polyline
-    folium.PolyLine(
-        locations=coords,
-        color=color,
-        weight=3,
-        opacity=0.85,
-        tooltip=folium.Tooltip(
-            f"<b style='color:{color}'>{vessel['name']}</b><br>"
-            f"IMO: {vessel['imo']} · KPLER_ID: {vessel['kpler_id']}<br>"
-            f"{len(trace)} waypoints",
-            sticky=True,
-        ),
-    ).add_to(m)
+    # ── Antimeridian-safe polyline ─────────────────────────────────────────────
+    # When a vessel crosses ±180° longitude, a naive polyline draws a straight
+    # line across the entire map. Fix: split the trace into segments wherever
+    # the longitude jumps by more than 180° between consecutive points.
+    def split_antimeridian(trace):
+        segments, current = [], []
+        for pt in trace:
+            if current:
+                prev_lon = current[-1][1]
+                curr_lon = pt["lon"]
+                if abs(curr_lon - prev_lon) > 180:
+                    segments.append(current)
+                    current = []
+            current.append([pt["lat"], pt["lon"]])
+        if current:
+            segments.append(current)
+        return segments
+ 
+    segments = split_antimeridian(trace)
+    tooltip_text = folium.Tooltip(
+        f"<b style='color:{color}'>{vessel['name']}</b><br>"
+        f"IMO: {vessel['imo']} · KPLER_ID: {vessel['kpler_id']}<br>"
+        f"{len(trace)} waypoints",
+        sticky=True,
+    )
+    for seg in segments:
+        folium.PolyLine(
+            locations=seg,
+            color=color,
+            weight=3,
+            opacity=0.85,
+            tooltip=tooltip_text,
+        ).add_to(m)
 
     # Waypoint circle markers — skip last point (replaced by triangle)
     last_idx = len(trace) - 1
