@@ -298,6 +298,10 @@ def get_vessel_color(index: int, total: int) -> str:
     return f"hsl({hue}, 75%, 48%)"
 
 def split_antimeridian(trace):
+    # ── Antimeridian-safe polyline ─────────────────────────────────────────────
+    # When a vessel crosses ±180° longitude, a naive polyline draws a straight
+    # line across the entire map. Fix: split the trace into segments wherever
+    # the longitude jumps by more than 180° between consecutive points.
         segments, current = [], []
         for pt in trace:
             if current:
@@ -310,6 +314,33 @@ def split_antimeridian(trace):
         if current:
             segments.append(current)
         return segments
+
+def unwrap_longitude(trace: list) -> list:
+    """
+    Adjust longitudes so the path stays continuous across the antimeridian.
+    Instead of jumping from +179 to -179, it continues to +181, +182 etc.
+    Leaflet handles coordinates outside [-180,180] correctly for polylines.
+    """
+    if not trace:
+        return trace
+
+    unwrapped = [dict(trace[0])]
+    for pt in trace[1:]:
+        prev_lon = unwrapped[-1]["lon"]
+        curr_lon = pt["lon"]
+        diff = curr_lon - prev_lon
+
+        # Wrap the difference into [-180, 180]
+        if diff > 180:
+            curr_lon -= 360
+        elif diff < -180:
+            curr_lon += 360
+
+        new_pt = dict(pt)
+        new_pt["lon"] = curr_lon
+        unwrapped.append(new_pt)
+
+    return unwrapped
 
 # ── Folium map ────────────────────────────────────────────────────────────────
 m = folium.Map(
@@ -348,22 +379,21 @@ for i, vessel in enumerate(selected_vessels):
     # the longitude jumps by more than 180° between consecutive points.
     
  
-    segments = split_antimeridian(trace)
+    trace = unwrap_longitude(trace)
+    coords = [[pt["lat"], pt["lon"]] for pt in trace]
 
-    # for seg in segments:
-    for seg in segments:
-        folium.PolyLine(
-            locations=seg,
-            color=color,
-            weight=3,
-            opacity=0.85,
-            tooltip=folium.Tooltip(   # fresh Tooltip per segment, not shared
-                f"<b style='color:{color}'>{vessel['name']}</b><br>"
-                f"IMO: {vessel['imo']} · KPLER_ID: {vessel['kpler_id']}<br>"
-                f"{len(trace)} waypoints",
-                sticky=True,
-            ),
-        ).add_to(m)
+    folium.PolyLine(
+        locations=coords,
+        color=color,
+        weight=3,
+        opacity=0.85,
+        tooltip=folium.Tooltip(   # fresh Tooltip per segment, not shared
+            f"<b style='color:{color}'>{vessel['name']}</b><br>"
+            f"IMO: {vessel['imo']} · KPLER_ID: {vessel['kpler_id']}<br>"
+            f"{len(trace)} waypoints",
+            sticky=True,
+        ),
+    ).add_to(m)
 
     # Waypoint circle markers — skip last point (replaced by triangle)
     last_idx = len(trace) - 1
