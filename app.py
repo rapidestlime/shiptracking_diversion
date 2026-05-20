@@ -349,20 +349,21 @@ for i, vessel in enumerate(selected_vessels):
     
  
     segments = split_antimeridian(trace)
-    tooltip_text = folium.Tooltip(
-        f"<b style='color:{color}'>{vessel['name']}</b><br>"
-        f"IMO: {vessel['imo']} · KPLER_ID: {vessel['kpler_id']}<br>"
-        f"{len(trace)} waypoints",
-        sticky=True,
-    )
+
     # for seg in segments:
-    folium.PolyLine(
-        locations=segments,
-        color=color,
-        weight=3,
-        opacity=0.85,
-        tooltip=tooltip_text,
-    ).add_to(m)
+    for seg in segments:
+        folium.PolyLine(
+            locations=seg,
+            color=color,
+            weight=3,
+            opacity=0.85,
+            tooltip=folium.Tooltip(   # fresh Tooltip per segment, not shared
+                f"<b style='color:{color}'>{vessel['name']}</b><br>"
+                f"IMO: {vessel['imo']} · KPLER_ID: {vessel['kpler_id']}<br>"
+                f"{len(trace)} waypoints",
+                sticky=True,
+            ),
+        ).add_to(m)
 
     # Waypoint circle markers — skip last point (replaced by triangle)
     last_idx = len(trace) - 1
