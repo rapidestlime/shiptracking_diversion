@@ -355,14 +355,14 @@ for i, vessel in enumerate(selected_vessels):
         f"{len(trace)} waypoints",
         sticky=True,
     )
-    for seg in segments:
-        folium.PolyLine(
-            locations=seg,
-            color=color,
-            weight=3,
-            opacity=0.85,
-            tooltip=tooltip_text,
-        ).add_to(m)
+    # for seg in segments:
+    folium.PolyLine(
+        locations=segments,
+        color=color,
+        weight=3,
+        opacity=0.85,
+        tooltip=tooltip_text,
+    ).add_to(m)
 
     # Waypoint circle markers — skip last point (replaced by triangle)
     last_idx = len(trace) - 1
