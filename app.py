@@ -304,6 +304,7 @@ m = folium.Map(
     zoom_start=3,
     tiles="CartoDB positron",
     prefer_canvas=True,
+    world_copy_jump=True,
 )
 
 for i, vessel in enumerate(selected_vessels):
