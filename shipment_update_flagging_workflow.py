@@ -23,8 +23,8 @@ TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_KEY", "YOUR_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "YOUR_CHANNEL_ID")
 
 # Detection tuning
-MIN_PINGS_REQUIRED        = 5    # skip ships with fewer pings than this
-N_RECENT_PINGS            = 150    # how many most-recent pings to analyse
+MIN_PINGS_REQUIRED        = 10    # skip ships with fewer pings than this
+N_RECENT_PINGS            = 100    # how many most-recent pings to analyse
 DIVERSION_SCORE_THRESHOLD = 2    # flag if this many signals (out of 3) fire
 
 # AIS gap handling
@@ -108,6 +108,18 @@ def cross_track_distance_nm(lat_p: float, lon_p: float,
     xtd = math.asin(math.sin(d_ap) * math.sin(theta_ap - theta_ab))   # radians
     return xtd * EARTH_RADIUS_NM
 
+def along_track_distance_nm(lat_a: float, lon_a: float,
+                             lat_p: float, lon_p: float,
+                             lat_b: float, lon_b: float) -> float:
+    """
+    Along-track distance (nm) of point P projected onto the great circle A→B.
+    Positive = P is ahead of A toward B.
+    Negative = P is behind A (moved away from B).
+    """
+    d_ap     = haversine_nm(lat_a, lon_a, lat_p, lon_p)
+    theta_ap = math.radians(initial_bearing(lat_a, lon_a, lat_p, lon_p))
+    theta_ab = math.radians(initial_bearing(lat_a, lon_a, lat_b, lon_b))
+    return d_ap * math.cos(theta_ap - theta_ab)
 
 def is_near_chokepoint(lat: float, lon: float) -> Optional[str]:
     """Returns the name of the chokepoint if the position is inside one, else None."""
@@ -171,10 +183,10 @@ def check_ais_jump(sorted_pings: list, gap_idx: int, sg_bound: bool) -> dict:
     post = sorted_pings[gap_idx]
 
     gap_hours    = (datetime.fromisoformat(post.get("receivedTime", 0)) - datetime.fromisoformat(pre.get("receivedTime", 0))).total_seconds() / 3600
-    jump_nm      = haversine_nm(pre["lat"], pre["lon"], post["lat"], post["lon"])
+    jump_nm      = haversine_nm(pre["geo"]["lat"], pre["geo"]["lon"], post["geo"]["lat"], post["geo"]["lon"])
 
-    sg_dist_pre  = haversine_nm(pre["lat"],  pre["lon"],  SINGAPORE["lat"], SINGAPORE["lon"])
-    sg_dist_post = haversine_nm(post["lat"], post["lon"], SINGAPORE["lat"], SINGAPORE["lon"])
+    sg_dist_pre  = haversine_nm(pre["geo"]["lat"],  pre["geo"]["lon"],  SINGAPORE["lat"], SINGAPORE["lon"])
+    sg_dist_post = haversine_nm(post["geo"]["lat"], post["geo"]["lon"], SINGAPORE["lat"], SINGAPORE["lon"])
     sg_delta_nm  = sg_dist_pre - sg_dist_post   # positive = closer, negative = farther
 
     if sg_bound:
@@ -205,9 +217,11 @@ def check_ais_jump(sorted_pings: list, gap_idx: int, sg_bound: bool) -> dict:
 class DiversionResult:
     ship_id:          str
     ship_name:        str
-    score:            int                      # 0–3 from the 3-signal algo
+    score:            int                    # 0–3 from the 3-signal algo
     flagged:          bool
     signals:          dict = field(default_factory=dict)
+    cargo:            Optional[str] = None
+    mode:             Optional[str] = None
     near_chokepoint:  Optional[str] = None
     latest_ping:      Optional[dict] = None
     reason:           str = ""
@@ -219,6 +233,8 @@ class DiversionResult:
 def detect_diversion(
     ship_name: str,
     ship_id:   str,
+    cargo: str,
+    dest_port: str,
     dest_lat:  float,
     dest_lon:  float,
     origin_lat: float,
@@ -264,8 +280,9 @@ def detect_diversion(
     # ── Determine detection mode early (needed by gap check) ──────────────
     dist_dest_to_sg = haversine_nm(dest_lat, dest_lon,
                                    SINGAPORE["lat"], SINGAPORE["lon"])
-    sg_bound = dist_dest_to_sg <= SINGAPORE_DEST_RADIUS_NM
-    mode = "sg_bound" if sg_bound else "non_sg_bound"
+    # sg_bound = dist_dest_to_sg <= SINGAPORE_DEST_RADIUS_NM
+    sg_bound = dest_port.lower() == "singapore"
+    mode = "sg_bound" if dest_port.lower() == "singapore" else "non_sg_bound"
 
     # ── AIS gap detection ─────────────────────────────────────────────────
     # Find the last significant gap within the recent window.
@@ -309,6 +326,7 @@ def detect_diversion(
                 ship_id=ship_id, ship_name=ship_name,
                 score=0, flagged=jump_flagged,
                 reason=reason,
+                mode=mode, 
                 latest_ping=latest,
                 ais_gap_detected=True,
                 ais_jump_info=jump_info,
@@ -333,27 +351,27 @@ def detect_diversion(
     norm_t     = [(t - t0).total_seconds() for t in timestamps]
     weights    = [float(i + 1) for i in range(len(recent))]   # recency weights
 
-    sg_dists = [
-        haversine_nm(p['geo']['lat'], p['geo']['lon'], SINGAPORE["lat"], SINGAPORE["lon"])
-        for p in recent
-    ]
-    dest_dists = [
-        haversine_nm(p['geo']['lat'], p['geo']['lon'], dest_lat, dest_lon)
-        for p in recent
-    ]
+    # sg_dists = [
+    #     haversine_nm(p['geo']['lat'], p['geo']['lon'], SINGAPORE["lat"], SINGAPORE["lon"])
+    #     for p in recent
+    # ]
+    # dest_dists = [
+    #     haversine_nm(p['geo']['lat'], p['geo']['lon'], dest_lat, dest_lon)
+    #     for p in recent
+    # ]
 
-    sg_slope = float(
-        np.polyfit(norm_t, sg_dists, 1, w=weights)[0]
-    ) if max(norm_t) > 0 else 0.0
+    # sg_slope = float(
+    #     np.polyfit(norm_t, sg_dists, 1, w=weights)[0]
+    # ) if max(norm_t) > 0 else 0.0
 
-    dest_slope = float(
-        np.polyfit(norm_t, dest_dists, 1, w=weights)[0]
-    ) if max(norm_t) > 0 else 0.0
+    # dest_slope = float(
+    #     np.polyfit(norm_t, dest_dists, 1, w=weights)[0]
+    # ) if max(norm_t) > 0 else 0.0
 
-    signals["sg_slope"]           = round(sg_slope, 5)
-    signals["dest_slope"]         = round(dest_slope, 5)
-    signals["sg_distances_nm"]    = [round(d, 1) for d in sg_dists]
-    signals["dest_distances_nm"]  = [round(d, 1) for d in dest_dists]
+    # signals["sg_slope"]           = round(sg_slope, 5)
+    # signals["dest_slope"]         = round(dest_slope, 5)
+    # signals["sg_distances_nm"]    = [round(d, 1) for d in sg_dists]
+    # signals["dest_distances_nm"]  = [round(d, 1) for d in dest_dists]
 
     threshold_pings = math.ceil(len(recent) * 0.6)
 
@@ -365,12 +383,61 @@ def detect_diversion(
         # Signal 1: Closing on SG while NOT making progress toward destination
         #   Both must be true simultaneously to avoid flagging ships that
         #   naturally pass near Singapore en-route to nearby ports.
-        sg_approach  = sg_slope  < -0.001   # genuinely closing on SG
-        dest_leaving = dest_slope > -0.005  # not meaningfully approaching dest
-        signal_1     = sg_approach and dest_leaving
+        # sg_approach  = sg_slope  < -0.001   # genuinely closing on SG
+        # dest_leaving = dest_slope > -0.005  # not meaningfully approaching dest
+        # signal_1     = sg_approach and dest_leaving
 
-        signals["sg_approach"]  = sg_approach
-        signals["dest_leaving"] = dest_leaving
+        # signals["sg_approach"]  = sg_approach
+        # signals["dest_leaving"] = dest_leaving
+
+        # Signal 1: Along-track progress toward destination is stalling/reversing
+        #           while along-track progress toward Singapore is growing.
+        #
+        #   along_track_dest:  how far along the origin→destination corridor
+        #                      the ship currently is. Should be increasing on a
+        #                      legitimate voyage.
+        #   along_track_sg:    how far along the origin→Singapore corridor the
+        #                      ship currently is. Should be flat/negative on a
+        #                      legitimate voyage.
+        #
+        #   Signal fires when BOTH:
+        #     - dest progress slope is not meaningfully positive (≤ 0.005 nm/s)
+        #     - SG progress slope is positive (> 0.001 nm/s)
+
+        at_dest_values = [
+            along_track_distance_nm(
+                origin_lat, origin_lon,
+                p["geo"]["lat"], p["geo"]["lon"],
+                dest_lat, dest_lon,
+            )
+            for p in recent
+        ]
+        at_sg_values = [
+            along_track_distance_nm(
+                origin_lat, origin_lon,
+                p["geo"]["lat"], p["geo"]["lon"],
+                SINGAPORE["lat"], SINGAPORE["lon"],
+            )
+            for p in recent
+        ]
+
+        at_dest_slope = float(
+            np.polyfit(norm_t, at_dest_values, 1, w=weights)[0]
+        ) if max(norm_t) > 0 else 0.0
+
+        at_sg_slope = float(
+            np.polyfit(norm_t, at_sg_values, 1, w=weights)[0]
+        ) if max(norm_t) > 0 else 0.0
+
+        dest_not_progressing = at_dest_slope <= 0.005   # not meaningfully advancing toward dest
+        sg_progressing       = at_sg_slope   >  0.001   # actively consuming SG corridor
+
+        signal_1 = dest_not_progressing and sg_progressing
+
+        signals["at_dest_slope"]        = round(at_dest_slope, 5)
+        signals["at_sg_slope"]          = round(at_sg_slope, 5)
+        signals["dest_not_progressing"] = dest_not_progressing
+        signals["sg_progressing"]       = sg_progressing
 
         # Signal 2: Course bearing persistently aligned toward Singapore
         bearing_matches = 0
@@ -421,8 +488,8 @@ def detect_diversion(
         reason_parts = []
         if signal_1:
             reason_parts.append(
-                f"[Non-SG] closing on SG (slope {signals['sg_slope']} nm/s) "
-                f"while diverging from dest (slope {signals['dest_slope']} nm/s)"
+                f"[Non-SG] closing on SG (slope {signals['at_sg_slope']} nm/s) "
+                f"while diverging from dest (slope {signals['at_dest_slope']} nm/s)"
             )
         if signal_2:
             reason_parts.append(
@@ -443,12 +510,45 @@ def detect_diversion(
         #           toward any other plausible point (dest == SG so dest_slope
         #           mirrors sg_slope — we use SG distance alone here).
         #   Fires if distance to SG is consistently growing.
-        sg_leaving = sg_slope > 0.001    # ship is moving away from SG
-        signal_1   = sg_leaving
-        signals["sg_leaving"] = sg_leaving
+        # sg_leaving = sg_slope > 0.001    # ship is moving away from SG
+        # signal_1   = sg_leaving
+        # signals["sg_leaving"] = sg_leaving
+
+        # Signal 1: Along-track progress toward Singapore is stalling or reversing.
+        #
+        #   A legitimately SG-bound ship should always be making positive
+        #   along-track progress toward Singapore along the origin→SG great circle,
+        #   regardless of which leg of the route it is on (Suez, COGH etc.).
+        #
+        #   This replaces the raw sg_slope check which fired spuriously for ships
+        #   on indirect routes (e.g. Rotterdam → COGH → Singapore) where distance
+        #   to SG increases on the southward leg even on a legitimate voyage.
+        #
+        #   Signal fires when along-track progress slope ≤ 0 (ship has stopped
+        #   consuming the origin→Singapore corridor or is moving backward on it).
+
+        at_sg_values = [
+            along_track_distance_nm(
+                origin_lat, origin_lon,
+                p["geo"]["lat"], p["geo"]["lon"],
+                SINGAPORE["lat"], SINGAPORE["lon"],
+            )
+            for p in recent
+        ]
+
+        at_sg_slope = float(
+            np.polyfit(norm_t, at_sg_values, 1, w=weights)[0]
+        ) if max(norm_t) > 0 else 0.0
+
+        sg_not_progressing = at_sg_slope <= 0.0   # flat or reversing along SG corridor
+        signal_1           = sg_not_progressing
+
+        signals["at_sg_slope"]         = round(at_sg_slope, 5)
+        signals["sg_not_progressing"]  = sg_not_progressing
+
 
         # Signal 2: Course bearing persistently AWAY from Singapore
-        #   The bearing is >135° off the direct Singapore heading on
+        #   The bearing is >45° off the direct Singapore heading on
         #   the majority of recent pings.
         bearing_away_count = 0
         for p in recent:
@@ -479,8 +579,13 @@ def detect_diversion(
                          if len(magnitudes) > 1 else 0.0
             # Also require the absolute deviation to be non-trivial (>20 nm)
             # so minor course adjustments don't fire this signal.
+            remaining_dist = haversine_nm(latest["geo"]["lat"], latest["geo"]["lon"],
+                               SINGAPORE["lat"], SINGAPORE["lon"])
             max_deviation = max(magnitudes) if magnitudes else 0.0
-            signal_3 = (mag_slope > 0) and (max_deviation > 20)
+            relative_dev   = max_deviation / remaining_dist if remaining_dist > 0 else 0
+            signal_3 = (mag_slope > 0) and (relative_dev > 0.2)
+
+            # signal_3 = (mag_slope > 0) and (max_deviation > 0.3)
             signals["xtd_from_sg_route_nm"]  = [round(x, 1) for x in xtd_values]
             signals["xtd_mag_slope"]         = round(mag_slope, 3)
             signals["xtd_max_deviation_nm"]  = round(max_deviation, 1)
@@ -492,7 +597,7 @@ def detect_diversion(
         reason_parts = []
         if signal_1:
             reason_parts.append(
-                f"[SG-bound] moving away from SG (slope {signals['sg_slope']} nm/s)"
+                f"[SG-bound] moving away from SG (slope {signals['at_sg_slope']} nm/s)"
             )
         if signal_2:
             reason_parts.append(
@@ -517,6 +622,8 @@ def detect_diversion(
         ship_id=ship_id,
         ship_name=ship_name,
         score=score,
+        cargo=cargo,
+        mode=mode,
         flagged=flagged,
         signals=signals,
         near_chokepoint=chokepoint,
@@ -532,7 +639,7 @@ def detect_diversion(
 # TELEGRAM
 # ══════════════════════════════════════════════════════════════════════════════
 
-def send_telegram_alert(result: DiversionResult) -> None:
+def send_telegram_alert(result: DiversionResult, flag_reverted: bool) -> None:
     """
     Send a Telegram alert for a flagged ship.
     Runs in stub/log-only mode until TELEGRAM_BOT_TOKEN is set.
@@ -543,13 +650,19 @@ def send_telegram_alert(result: DiversionResult) -> None:
     spd  = p.get("speed", "?")
     # area = p.get("areaName", "Unknown area")
     ts   = p["receivedTime"] + " UTC" if p.get("receivedTime") else "?"
-
-    text = (
-        f"🚨 *Possible Singapore Diversion*\n\n"
-        f"*Ship:* {result.ship_name}  (ID: `{result.ship_id}`)\n"
+    if not flag_reverted:
+        text = (
+        f"{'🚨 *Possible Shipment Diversion!* 🚨'}\n\n"
+        f"*Ship:* {result.ship_name}  (IMO: `{result.ship_id}`)\n"
         f"*Score:* {result.score}/3 signals\n"
-        f"*Reason:* {result.reason}\n"
-    )
+        f"*Reason:* Vessel carrying {result.cargo} {'might be diverting away from Singapore' if result.mode == 'sg-bound' else 'might be heading towards other destination instead of Singapore'}\n"
+        )
+    else:
+        text = (
+        f"{'🚨 *Singapore-bound Shipment Diversion Alert Reverted*' if result.mode == 'sg-bound' else '🚨 *Shipment Diversion towards Singapore Alert Reverted*'}\n\n"
+        f"*Ship:* {result.ship_name}  (IMO: `{result.ship_id}`)\n"
+        f"*Cargo:* {result.cargo}\n"
+        )
 
     if result.ais_gap_detected and result.ais_jump_info:
         j = result.ais_jump_info
@@ -642,7 +755,7 @@ def run() -> None:
     kpler   = KplerSession()            # loads saved tokens from kpler_tokens.json
     sheet   = gsheet.sheet
 
-    ships   = get_all_ships(sheet)      # list of dicts keyed by COLUMNS
+    ships, header_map   = get_all_ships(sheet)      # list of dicts keyed by COLUMNS
     if not ships:
         log.warning("Sheet has no data rows — nothing to process.")
         return
@@ -660,8 +773,9 @@ def run() -> None:
         dest_port  = record.get("Original_Dest", "")
         dest_lat   = safe_float(record.get("Original_Dest_Lat"))
         dest_lon   = safe_float(record.get("Original_Dest_Long"))
+        cargo = record.get("Cargo")
 
-        log.info("Row %d | %s (KPLER_ID=%s IMO=%s) → %s",
+        log.info("Row %d --- %s --- [KPLER_ID= %s IMO= %s] --- %s",
                  row_idx, ship_name, kpler_id, imo, dest_port)
 
         # ── Guard: need KPLER_ID and a departure date to fetch positions ──
@@ -702,43 +816,61 @@ def run() -> None:
         # Step 2 and 3: used refreshed positions list due to changes caused by interference
         if fresh_positions:
             fresh_positions.sort(key=lambda x: x.get('receivedTime', ''))
+            # record["Coord_Trace"] = fresh_positions
+            # try:
+            #     upsert_ship(sheet, row_idx, record)
+            #     log.info("  Coord_Trace for %s updated in sheet.", ship_name)
+            # except Exception as exc:
+            #     log.error("  Sheet write failed for %s: %s", ship_name, exc)
+
+            # # ── Step 4: Run diversion detection ───────────────────────────────
+            # if not merged_pings:
+            #     log.warning("  No pings available — skipping detection.")
+            #     continue
+
+            first_ping = min(fresh_positions, key=lambda p: p.get("receivedTime", 0))
+            origin_lat = first_ping.get("lat", 0.0)
+            origin_lon = first_ping.get("lon", 0.0)
+
+            result = detect_diversion(
+                ship_name  = ship_name,
+                ship_id    = str(imo),
+                cargo=cargo,
+                dest_port = dest_port,
+                dest_lat   = dest_lat,
+                dest_lon   = dest_lon,
+                origin_lat = origin_lat,
+                origin_lon = origin_lon,
+                pings      = fresh_positions,
+            )
+
+            log.info(
+                "  score=%d/3  flagged=%s  ais_gap=%s  chokepoint=%s",
+                result.score, result.flagged,
+                result.ais_gap_detected, result.near_chokepoint or "—",
+            )
+            log.info("  reason: %s", result.reason)
+            log.info("  signal statistics: %s", result.signals)
+
             record["Coord_Trace"] = fresh_positions
+            prev_flag = record.get("Diversion_Flag")
+            print(f"{type(prev_flag)} --- {prev_flag}")
+            record["Diversion_Flag"] = result.flagged
             try:
-                upsert_ship(sheet, row_idx, record)
+                upsert_ship(sheet, row_idx, record, header_map)
                 log.info("  Coord_Trace for %s updated in sheet.", ship_name)
             except Exception as exc:
                 log.error("  Sheet write failed for %s: %s", ship_name, exc)
 
-        # # ── Step 4: Run diversion detection ───────────────────────────────
-        # if not merged_pings:
-        #     log.warning("  No pings available — skipping detection.")
-        #     continue
 
-        first_ping = min(fresh_positions, key=lambda p: p.get("receivedTime", 0))
-        origin_lat = first_ping.get("lat", 0.0)
-        origin_lon = first_ping.get("lon", 0.0)
+            # ── Step 5: Alert if flagged ───────────────────────────────────────
+            if result.flagged and prev_flag in ("FALSE", None):
+                flagged_count += 1
+                send_telegram_alert(result=result, flag_reverted=False)
 
-        result = detect_diversion(
-            ship_name  = ship_name,
-            ship_id    = str(kpler_id),
-            dest_lat   = dest_lat,
-            dest_lon   = dest_lon,
-            origin_lat = origin_lat,
-            origin_lon = origin_lon,
-            pings      = fresh_positions,
-        )
-
-        log.info(
-            "  score=%d/3  flagged=%s  ais_gap=%s  chokepoint=%s",
-            result.score, result.flagged,
-            result.ais_gap_detected, result.near_chokepoint or "—",
-        )
-        log.info("  reason: %s", result.reason)
-
-        # ── Step 5: Alert if flagged ───────────────────────────────────────
-        if result.flagged or result.ais_jump_flagged:
-            flagged_count += 1
-            send_telegram_alert(result)
+            if not result.flagged and prev_flag == "TRUE":
+                flagged_count += 1
+                send_telegram_alert(result=result, flag_reverted=True)
 
     log.info(
         "═══ Done. %d/%d ship(s) flagged. ═══",
