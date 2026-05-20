@@ -297,6 +297,19 @@ def get_vessel_color(index: int, total: int) -> str:
     hue = (index * 137) % 360   # golden-angle spread for distinct hues
     return f"hsl({hue}, 75%, 48%)"
 
+def split_antimeridian(trace):
+        segments, current = [], []
+        for pt in trace:
+            if current:
+                prev_lon = current[-1][1]
+                curr_lon = pt["lon"]
+                if abs(curr_lon - prev_lon) > 180:
+                    segments.append(current)
+                    current = []
+            current.append([pt["lat"], pt["lon"]])
+        if current:
+            segments.append(current)
+        return segments
 
 # ── Folium map ────────────────────────────────────────────────────────────────
 m = folium.Map(
@@ -333,19 +346,7 @@ for i, vessel in enumerate(selected_vessels):
     # When a vessel crosses ±180° longitude, a naive polyline draws a straight
     # line across the entire map. Fix: split the trace into segments wherever
     # the longitude jumps by more than 180° between consecutive points.
-    def split_antimeridian(trace):
-        segments, current = [], []
-        for pt in trace:
-            if current:
-                prev_lon = current[-1][1]
-                curr_lon = pt["lon"]
-                if abs(curr_lon - prev_lon) > 180:
-                    segments.append(current)
-                    current = []
-            current.append([pt["lat"], pt["lon"]])
-        if current:
-            segments.append(current)
-        return segments
+    
  
     segments = split_antimeridian(trace)
     tooltip_text = folium.Tooltip(
